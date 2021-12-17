@@ -2,10 +2,11 @@ import csv
 import logging
 import os
 import sys
+from typing import List, Optional, Dict
 
 import torch
 from scipy.stats import pearsonr, spearmanr
-from sklearn.metrics import f1_score, matthews_corrcoef
+from sklearn.metrics import f1_score, matthews_corrcoef, accuracy_score
 from torch.utils.data import TensorDataset
 
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
@@ -42,7 +43,6 @@ class InputFeatures(object):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
-        self.seq_length = seq_length
         self.label_id = label_id
 
 
@@ -72,6 +72,13 @@ class DataProcessor(object):
                     line = list(unicode(cell, 'utf-8') for cell in line)
                 lines.append(line)
             return lines
+
+    @classmethod
+    def _read_txt(cls, input_file: str) -> List[str]:
+        """Reads a tab separated value file."""
+        with open(input_file, "r", encoding='UTF-8') as f:
+            lines = f.read().splitlines()
+        return lines
 
 
 class MrpcProcessor(DataProcessor):
@@ -405,6 +412,54 @@ class WnliProcessor(DataProcessor):
         return examples
 
 
+class MultiemoProcessor(DataProcessor):
+    """Processor for the Multiemo set"""
+
+    def __init__(self, lang: str, domain: str, kind: str):
+        super(MultiemoProcessor, self).__init__()
+        self.lang = lang.lower()
+        self.domain = domain.lower()
+        self.kind = kind.lower()
+
+    def get_train_examples(self, data_dir: str) -> List[InputExample]:
+        """See base class."""
+        file_path = self.get_set_type_path(data_dir, 'train')
+        logger.info(f"LOOKING AT {file_path}")
+        return self._create_examples(self._read_txt(file_path), "train")
+
+    def get_dev_examples(self, data_dir: str) -> List[InputExample]:
+        """See base class."""
+        file_path = self.get_set_type_path(data_dir, 'dev')
+        return self._create_examples(self._read_txt(file_path), "dev")
+
+    def get_test_examples(self, data_dir: str) -> List[InputExample]:
+        """See base class."""
+        file_path = self.get_set_type_path(data_dir, 'test')
+        return self._create_examples(self._read_txt(file_path), "test")
+
+    def get_set_type_path(self, data_dir: str, set_type: str) -> str:
+        return os.path.join(data_dir, self.domain + '.' + self.kind + '.' + set_type + '.' + self.lang + '.txt')
+
+    def get_labels(self) -> List[str]:
+        """See base class."""
+        if self.kind == 'text':
+            return ["meta_amb", "meta_minus_m", "meta_plus_m", "meta_zero"]
+        else:
+            return ["z_amb", "z_minus_m", "z_plus_m", "z_zero"]
+
+    @staticmethod
+    def _create_examples(lines: List[str], set_type: str) -> List[InputExample]:
+        examples = []
+        for (i, line) in enumerate(lines):
+            guid = "%s-%s" % (set_type, i)
+            split_line = line.split('__label__')
+            text_a = split_line[0]
+            label = split_line[1]
+            examples.append(
+                InputExample(guid=guid, text_a=text_a, text_b=None, label=label))
+        return examples
+
+
 def convert_examples_to_features(examples, label_list, max_seq_length,
                                  tokenizer, output_mode):
     """Loads a data file into a list of `InputBatch`s."""
@@ -435,16 +490,6 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
 
         input_ids = tokenizer.convert_tokens_to_ids(tokens)
         input_mask = [1] * len(input_ids)
-        seq_length = len(input_ids)
-
-        padding = [0] * (max_seq_length - len(input_ids))
-        input_ids += padding
-        input_mask += padding
-        segment_ids += padding
-
-        assert len(input_ids) == max_seq_length
-        assert len(input_mask) == max_seq_length
-        assert len(segment_ids) == max_seq_length
 
         if output_mode == "classification":
             label_id = label_map[example.label]
@@ -456,21 +501,21 @@ def convert_examples_to_features(examples, label_list, max_seq_length,
         if ex_index < 1:
             logger.info("*** Example ***")
             logger.info("guid: %s" % (example.guid))
-            logger.info("tokens: %s" % " ".join(
-                [str(x) for x in tokens]))
+            logger.info("tokens: %s" % " ".join([str(x) for x in tokens]))
             logger.info("input_ids: %s" % " ".join([str(x) for x in input_ids]))
             logger.info("input_mask: %s" % " ".join([str(x) for x in input_mask]))
-            logger.info(
-                "segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
+            logger.info("segment_ids: %s" % " ".join([str(x) for x in segment_ids]))
             logger.info("label: {}".format(example.label))
             logger.info("label_id: {}".format(label_id))
 
         features.append(
-            InputFeatures(input_ids=input_ids,
-                          input_mask=input_mask,
-                          segment_ids=segment_ids,
-                          label_id=label_id,
-                          seq_length=seq_length))
+            InputFeatures(
+                input_ids=input_ids,
+                input_mask=input_mask,
+                segment_ids=segment_ids,
+                label_id=label_id
+            )
+        )
     return features
 
 
@@ -484,6 +529,61 @@ def _truncate_seq_pair(tokens_a, tokens_b, max_length):
             tokens_a.pop()
         else:
             tokens_b.pop()
+
+
+class Dataset(torch.utils.data.Dataset):
+    def __init__(self, all_input_ids, all_attention_mask, all_token_type_ids, labels: Optional[torch.Tensor] = None):
+        self.data = {
+            'input_ids': all_input_ids,
+            'token_type_ids': all_token_type_ids,
+            'attention_mask': all_attention_mask
+        }
+        self.n_examples = len(self.data['input_ids'])
+        if labels is not None:
+            self.data.update({'labels': labels})
+
+    def __getitem__(self, idx: int):
+        return {key: self.data[key][idx] for key in self.data.keys()}
+
+    def __len__(self):
+        return self.n_examples
+
+
+class SmartCollator:
+    def __init__(self, pad_token_id: int, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.pad_token_id = pad_token_id
+
+    def collate_batch(self, batch) -> Dict[str, torch.Tensor]:
+        max_size = max([len(example['input_ids']) for example in batch])
+
+        batch_inputs = list()
+        batch_attention_masks = list()
+        batch_token_type_ids = list()
+        labels = list()
+
+        for item in batch:
+            batch_inputs += [pad_seq(item['input_ids'], max_size, self.pad_token_id)]
+            batch_attention_masks += [pad_seq(item['attention_mask'], max_size, 0)]
+            if 'labels' in item.keys():
+                labels.append(item['labels'])
+            if 'token_type_ids' in item.keys():
+                batch_token_type_ids += [pad_seq(item['token_type_ids'], max_size, 0)]
+
+        out_batch = {
+            "input_ids": torch.tensor(batch_inputs, dtype=torch.long),
+            "attention_mask": torch.tensor(batch_attention_masks, dtype=torch.long)
+        }
+        if len(labels) != 0:
+            out_batch.update({'labels': torch.tensor(labels)})
+        if len(batch_token_type_ids) != 0:
+            out_batch.update({'token_type_ids': torch.tensor(batch_token_type_ids, dtype=torch.long)})
+
+        return out_batch
+
+
+def pad_seq(seq: List[int], max_batch_len: int, pad_value: int) -> List[int]:
+    return seq + (max_batch_len - len(seq)) * [pad_value]
 
 
 def simple_accuracy(preds, labels):
@@ -510,9 +610,21 @@ def pearson_and_spearman(preds, labels):
     }
 
 
+def multiclass_acc_and_f1(preds, labels):
+    acc = accuracy_score(y_true=labels, y_pred=preds)
+    f1 = f1_score(y_true=labels, y_pred=preds, average='macro')
+    return {
+        "acc": acc,
+        "f1": f1,
+        "acc_and_f1": (acc + f1) / 2,
+    }
+
+
 def compute_metrics(task_name, preds, labels):
     assert len(preds) == len(labels)
-    if task_name == "cola":
+    if 'multiemo' in task_name:
+        return multiclass_acc_and_f1(preds, labels)
+    elif task_name == "cola":
         return {"mcc": matthews_corrcoef(labels, preds)}
     elif task_name == "sst-2":
         return {"acc": simple_accuracy(preds, labels)}
@@ -536,19 +648,20 @@ def compute_metrics(task_name, preds, labels):
         raise KeyError(task_name)
 
 
-def get_tensor_data(output_mode, features):
+def get_dataset_and_labels(output_mode, features):
     if output_mode == "classification":
-        all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.long)
+        all_labels = torch.tensor([f.label_id for f in features], dtype=torch.long)
     elif output_mode == "regression":
-        all_label_ids = torch.tensor([f.label_id for f in features], dtype=torch.float)
+        all_labels = torch.tensor([f.label_id for f in features], dtype=torch.float)
+    else:
+        raise ValueError
 
-    all_seq_lengths = torch.tensor([f.seq_length for f in features], dtype=torch.long)
-    all_input_ids = torch.tensor([f.input_ids for f in features], dtype=torch.long)
-    all_input_mask = torch.tensor([f.input_mask for f in features], dtype=torch.long)
-    all_segment_ids = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
-    tensor_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids,
-                                all_label_ids, all_seq_lengths)
-    return tensor_data, all_label_ids
+    all_input_ids = [f.input_ids for f in features]
+    all_attention_mask = [f.input_mask for f in features]
+    all_token_type_ids = [f.segment_ids for f in features]
+
+    dataset = Dataset(all_input_ids, all_attention_mask, all_token_type_ids, all_labels)
+    return dataset, all_labels
 
 
 processors = {

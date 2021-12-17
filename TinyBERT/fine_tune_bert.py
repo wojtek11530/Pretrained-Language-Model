@@ -35,7 +35,7 @@ from tqdm import tqdm, trange
 from torch.nn import CrossEntropyLoss, MSELoss
 
 from data_processing import convert_examples_to_features, \
-    compute_metrics, get_tensor_data, processors, output_modes
+    compute_metrics, get_dataset_and_labels, processors, output_modes, SmartCollator
 from transformer.modeling import TinyBertForSequenceClassification
 from transformer.tokenization import BertTokenizer
 from transformer.optimization import BertAdam
@@ -51,12 +51,6 @@ fh.setFormatter(logging.Formatter(log_format))
 logging.getLogger().addHandler(fh)
 logger = logging.getLogger()
 
-oncloud = True
-try:
-    import moxing as mox
-except:
-    oncloud = False
-
 
 def result_to_file(result, file_name):
     with open(file_name, "a") as writer:
@@ -71,12 +65,16 @@ def do_eval(model, task_name, eval_dataloader,
             device, output_mode, eval_labels, num_labels):
     eval_loss = 0
     nb_eval_steps = 0
-    preds = []
+    all_logits = None
 
     for batch_ in tqdm(eval_dataloader, desc="Evaluating"):
-        batch_ = tuple(t.to(device) for t in batch_)
+        batch_ = {k: v.to(device) for k, v in batch_.items()}
+
         with torch.no_grad():
-            input_ids, input_mask, segment_ids, label_ids, seq_lengths = batch_
+            input_ids = batch_['input_ids']
+            input_mask = batch_['attention_mask']
+            segment_ids = batch_['token_type_ids']
+            label_ids = batch_['labels']
 
             logits, _, _ = model(input_ids, segment_ids, input_mask)
 
@@ -87,26 +85,29 @@ def do_eval(model, task_name, eval_dataloader,
         elif output_mode == "regression":
             loss_fct = MSELoss()
             tmp_eval_loss = loss_fct(logits.view(-1), label_ids.view(-1))
+        else:
+            raise ValueError('Not known output model')
 
         eval_loss += tmp_eval_loss.mean().item()
         nb_eval_steps += 1
-        if len(preds) == 0:
-            preds.append(logits.detach().cpu().numpy())
+
+        if all_logits is None:
+            all_logits = logits.detach().cpu().numpy()
         else:
-            preds[0] = np.append(
-                preds[0], logits.detach().cpu().numpy(), axis=0)
+            all_logits = np.append(all_logits, logits.detach().cpu().numpy(), axis=0)
 
     eval_loss = eval_loss / nb_eval_steps
 
-    preds = preds[0]
     if output_mode == "classification":
-        preds = np.argmax(preds, axis=1)
+        preds = np.argmax(all_logits, axis=1)
     elif output_mode == "regression":
-        preds = np.squeeze(preds)
+        preds = np.squeeze(all_logits)
+    else:
+        raise ValueError('Not known output model')
+
     result = compute_metrics(task_name, preds, eval_labels.numpy())
     result['eval_loss'] = eval_loss
-
-    return result
+    return result, all_logits
 
 
 def main():
@@ -198,7 +199,7 @@ def main():
         "cola": {"num_train_epochs": 3, "max_seq_length": 64},
         "mnli": {"num_train_epochs": 3, "max_seq_length": 128},
         "mrpc": {"num_train_epochs": 3, "max_seq_length": 128},
-        "sst-2": {"num_train_epochs":3, "max_seq_length": 64},
+        "sst-2": {"num_train_epochs": 3, "max_seq_length": 64},
         "sts-b": {"num_train_epochs": 3, "max_seq_length": 128},
         "qqp": {"num_train_epochs": 3, "max_seq_length": 128},
         "qnli": {"num_train_epochs": 3, "max_seq_length": 128},
@@ -267,15 +268,19 @@ def main():
 
         train_features = convert_examples_to_features(train_examples, label_list,
                                                       args.max_seq_length, tokenizer, output_mode)
-        train_data, _ = get_tensor_data(output_mode, train_features)
-        train_sampler = RandomSampler(train_data)
-        train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size)
+        train_dataset, _ = get_dataset_and_labels(output_mode, train_features)
+        collator = SmartCollator(0)
+        train_sampler = RandomSampler(train_dataset)
+        train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size,
+                                      collate_fn=collator.collate_batch, pin_memory=False)
 
     eval_examples = processor.get_dev_examples(args.data_dir)
     eval_features = convert_examples_to_features(eval_examples, label_list, args.max_seq_length, tokenizer, output_mode)
-    eval_data, eval_labels = get_tensor_data(output_mode, eval_features)
+    eval_data, eval_labels = get_dataset_and_labels(output_mode, eval_features)
+    collator = SmartCollator(0)
     eval_sampler = SequentialSampler(eval_data)
-    eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
+    eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size,
+                                 collate_fn=collator.collate_batch, pin_memory=False)
 
     model = TinyBertForSequenceClassification.from_pretrained(args.pretrained_model, num_labels=num_labels)
     model.to(device)
@@ -286,8 +291,8 @@ def main():
         logger.info("  Batch size = %d", args.eval_batch_size)
 
         model.eval()
-        result = do_eval(model, task_name, eval_dataloader,
-                         device, output_mode, eval_labels, num_labels)
+        result, _ = do_eval(model, task_name, eval_dataloader,
+                            device, output_mode, eval_labels, num_labels)
         logger.info("***** Eval results *****")
         for key in sorted(result.keys()):
             logger.info("  %s = %s", key, str(result[key]))
@@ -313,11 +318,13 @@ def main():
         ]
         schedule = 'warmup_linear'
 
-        optimizer = BertAdam(optimizer_grouped_parameters,
-                             schedule=schedule,
-                             lr=args.learning_rate,
-                             warmup=args.warmup_proportion,
-                             t_total=num_train_optimization_steps)
+        optimizer = BertAdam(
+            optimizer_grouped_parameters,
+            schedule=schedule,
+            lr=args.learning_rate,
+            warmup=args.warmup_proportion,
+            t_total=num_train_optimization_steps
+        )
 
         # Train and evaluate
         global_step = 0
@@ -332,9 +339,13 @@ def main():
             nb_tr_examples, nb_tr_steps = 0, 0
 
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration", ascii=True)):
-                batch = tuple(t.to(device) for t in batch)
+                batch = {k: v.to(device) for k, v in batch.items()}
 
-                input_ids, input_mask, segment_ids, label_ids, seq_lengths = batch
+                input_ids = batch['input_ids']
+                input_mask = batch['attention_mask']
+                segment_ids = batch['token_type_ids']
+                label_ids = batch['labels']
+
                 if input_ids.size()[0] != args.train_batch_size:
                     continue
 
@@ -380,8 +391,8 @@ def main():
                     loss = tr_loss / (step + 1)
                     cls_loss = tr_cls_loss / (step + 1)
 
-                    result = do_eval(model, task_name, eval_dataloader,
-                                     device, output_mode, eval_labels, num_labels)
+                    result, _ = do_eval(model, task_name, eval_dataloader,
+                                        device, output_mode, eval_labels, num_labels)
                     result['global_step'] = global_step
                     result['cls_loss'] = cls_loss
                     result['loss'] = loss
@@ -427,7 +438,7 @@ def main():
 
                             eval_features = convert_examples_to_features(
                                 eval_examples, label_list, args.max_seq_length, tokenizer, output_mode)
-                            eval_data, eval_labels = get_tensor_data(output_mode, eval_features)
+                            eval_data, eval_labels = get_dataset_and_labels(output_mode, eval_features)
 
                             logger.info("***** Running mm evaluation *****")
                             logger.info("  Num examples = %d", len(eval_examples))
@@ -437,8 +448,8 @@ def main():
                             eval_dataloader = DataLoader(eval_data, sampler=eval_sampler,
                                                          batch_size=args.eval_batch_size)
 
-                            result = do_eval(model, task_name, eval_dataloader,
-                                             device, output_mode, eval_labels, num_labels)
+                            result, _ = do_eval(model, task_name, eval_dataloader,
+                                                device, output_mode, eval_labels, num_labels)
 
                             result['global_step'] = global_step
 
@@ -446,12 +457,6 @@ def main():
                             result_to_file(result, tmp_output_eval_file)
 
                             task_name = 'mnli'
-
-                        if oncloud:
-                            logging.info(mox.file.list_directory(args.output_dir, recursive=True))
-                            logging.info(mox.file.list_directory('.', recursive=True))
-                            mox.file.copy_parallel(args.output_dir, args.data_url)
-                            mox.file.copy_parallel('.', args.data_url)
 
                     model.train()
 

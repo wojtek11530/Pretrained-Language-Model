@@ -22,24 +22,28 @@ from __future__ import absolute_import, division, print_function
 
 import argparse
 import csv
+import json
 import logging
 import os
-import random
 import sys
+import time
+from datetime import timedelta
 
 import numpy as np
 import torch
+from sklearn.metrics import classification_report
 from torch.utils.data import (DataLoader, RandomSampler, SequentialSampler)
 from tqdm import tqdm, trange
 
 from torch.nn import CrossEntropyLoss, MSELoss
 
 from data_processing import convert_examples_to_features, \
-    compute_metrics, get_tensor_data, processors, output_modes
+    compute_metrics, get_dataset_and_labels, processors, output_modes, MultiemoProcessor, SmartCollator
 from transformer.modeling import TinyBertForSequenceClassification
 from transformer.tokenization import BertTokenizer
 from transformer.optimization import BertAdam
 from transformer.file_utils import WEIGHTS_NAME, CONFIG_NAME
+from utils import dictionary_to_json, result_to_text_file
 
 csv.field_size_limit(sys.maxsize)
 
@@ -50,12 +54,6 @@ fh = logging.FileHandler('debug_layer_loss.log')
 fh.setFormatter(logging.Formatter(log_format))
 logging.getLogger().addHandler(fh)
 logger = logging.getLogger()
-
-oncloud = True
-try:
-    import moxing as mox
-except:
-    oncloud = False
 
 
 def result_to_file(result, file_name):
@@ -71,12 +69,16 @@ def do_eval(model, task_name, eval_dataloader,
             device, output_mode, eval_labels, num_labels):
     eval_loss = 0
     nb_eval_steps = 0
-    preds = []
+    all_logits = None
 
     for batch_ in tqdm(eval_dataloader, desc="Evaluating"):
-        batch_ = tuple(t.to(device) for t in batch_)
+        batch_ = {k: v.to(device) for k, v in batch_.items()}
+
         with torch.no_grad():
-            input_ids, input_mask, segment_ids, label_ids, seq_lengths = batch_
+            input_ids = batch_['input_ids']
+            input_mask = batch_['attention_mask']
+            segment_ids = batch_['token_type_ids']
+            label_ids = batch_['labels']
 
             logits, _, _ = model(input_ids, segment_ids, input_mask)
 
@@ -87,26 +89,29 @@ def do_eval(model, task_name, eval_dataloader,
         elif output_mode == "regression":
             loss_fct = MSELoss()
             tmp_eval_loss = loss_fct(logits.view(-1), label_ids.view(-1))
+        else:
+            raise ValueError('Not known output model')
 
         eval_loss += tmp_eval_loss.mean().item()
         nb_eval_steps += 1
-        if len(preds) == 0:
-            preds.append(logits.detach().cpu().numpy())
+
+        if all_logits is None:
+            all_logits = logits.detach().cpu().numpy()
         else:
-            preds[0] = np.append(
-                preds[0], logits.detach().cpu().numpy(), axis=0)
+            all_logits = np.append(all_logits, logits.detach().cpu().numpy(), axis=0)
 
     eval_loss = eval_loss / nb_eval_steps
 
-    preds = preds[0]
     if output_mode == "classification":
-        preds = np.argmax(preds, axis=1)
+        preds = np.argmax(all_logits, axis=1)
     elif output_mode == "regression":
-        preds = np.squeeze(preds)
+        preds = np.squeeze(all_logits)
+    else:
+        raise ValueError('Not known output model')
+
     result = compute_metrics(task_name, preds, eval_labels.numpy())
     result['eval_loss'] = eval_loss
-
-    return result
+    return result, all_logits
 
 
 def main():
@@ -152,11 +157,11 @@ def main():
                         action='store_true',
                         help="Set this flag if you are using an uncased model.")
     parser.add_argument("--train_batch_size",
-                        default=32,
+                        default=16,
                         type=int,
                         help="Total batch size for training.")
     parser.add_argument("--eval_batch_size",
-                        default=32,
+                        default=16,
                         type=int,
                         help="Total batch size for eval.")
     parser.add_argument("--learning_rate",
@@ -173,7 +178,7 @@ def main():
                         type=float,
                         help="Total number of training epochs to perform.")
     parser.add_argument("--warmup_proportion",
-                        default=0.1,
+                        default=0.0,
                         type=float,
                         help="Proportion of training to perform linear learning rate warmup for. "
                              "E.g., 0.1 = 10%% of training.")
@@ -209,6 +214,7 @@ def main():
 
     # intermediate distillation default parameters
     default_params = {
+        "multiemo": {"max_seq_length": 128, "train_batch_size": 16},
         "cola": {"num_train_epochs": 50, "max_seq_length": 64},
         "mnli": {"num_train_epochs": 5, "max_seq_length": 128},
         "mrpc": {"num_train_epochs": 20, "max_seq_length": 128},
@@ -219,7 +225,7 @@ def main():
         "rte": {"num_train_epochs": 20, "max_seq_length": 128}
     }
 
-    acc_tasks = ["mnli", "mrpc", "sst-2", "qqp", "qnli", "rte"]
+    acc_tasks = ["mnli", "mrpc", "sst-2", "qqp", "qnli", "rte", "multiemo"]
     corr_tasks = ["sts-b"]
     mcc_tasks = ["cola"]
 
@@ -233,10 +239,6 @@ def main():
 
     logger.info("device: {} n_gpu: {}".format(device, n_gpu))
 
-    # Prepare seed
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
     if n_gpu > 0:
         torch.cuda.manual_seed_all(args.seed)
 
@@ -250,15 +252,24 @@ def main():
 
     if task_name in default_params:
         args.max_seq_len = default_params[task_name]["max_seq_length"]
+    elif 'multiemo' in task_name:
+        args.max_seq_length = default_params['multiemo']["max_seq_length"]
 
     if not args.pred_distill and not args.do_eval:
         if task_name in default_params:
             args.num_train_epoch = default_params[task_name]["num_train_epochs"]
+        elif 'multiemo' in task_name:
+            args.num_train_epoch = default_params['multiemo']["num_train_epochs"]
 
-    if task_name not in processors:
+    if task_name not in processors and 'multiemo' not in task_name:
         raise ValueError("Task not found: %s" % task_name)
 
-    processor = processors[task_name]()
+    if 'multiemo' in task_name:
+        _, lang, domain, kind = task_name.split('_')
+        processor = MultiemoProcessor(lang, domain, kind)
+    else:
+        processor = processors[task_name]()
+
     output_mode = output_modes[task_name]
     label_list = processor.get_labels()
     num_labels = len(label_list)
@@ -281,15 +292,20 @@ def main():
 
         train_features = convert_examples_to_features(train_examples, label_list,
                                                       args.max_seq_length, tokenizer, output_mode)
-        train_data, _ = get_tensor_data(output_mode, train_features)
-        train_sampler = RandomSampler(train_data)
-        train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size)
+
+        train_dataset, _ = get_dataset_and_labels(output_mode, train_features)
+        collator = SmartCollator(0)
+        train_sampler = RandomSampler(train_dataset)
+        train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size,
+                                      collate_fn=collator.collate_batch, pin_memory=False)
 
     eval_examples = processor.get_dev_examples(args.data_dir)
     eval_features = convert_examples_to_features(eval_examples, label_list, args.max_seq_length, tokenizer, output_mode)
-    eval_data, eval_labels = get_tensor_data(output_mode, eval_features)
+    eval_data, eval_labels = get_dataset_and_labels(output_mode, eval_features)
+    collator = SmartCollator(0)
     eval_sampler = SequentialSampler(eval_data)
-    eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size)
+    eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.eval_batch_size,
+                                 collate_fn=collator.collate_batch, pin_memory=False)
 
     if not args.do_eval:
         teacher_model = TinyBertForSequenceClassification.from_pretrained(args.teacher_model, num_labels=num_labels)
@@ -298,24 +314,60 @@ def main():
     student_model = TinyBertForSequenceClassification.from_pretrained(args.student_model, num_labels=num_labels)
     student_model.to(device)
     if args.do_eval:
-        logger.info("***** Running evaluation *****")
-        logger.info("  Num examples = %d", len(eval_examples))
+        ##########################################
+        ##             TEST                     ##
+        ##########################################
+
+        test_examples = processor.get_test_examples(args.data_dir)
+        test_features = convert_examples_to_features(test_examples, label_list, args.max_seq_length, tokenizer,
+                                                     output_mode)
+        test_data, test_labels = get_dataset_and_labels(output_mode, test_features)
+        collator = SmartCollator(0)
+        test_sampler = SequentialSampler(test_data)
+        test_dataloader = DataLoader(test_data, sampler=test_sampler, batch_size=args.eval_batch_size,
+                                     collate_fn=collator.collate_batch, pin_memory=False)
+
+        logger.info("***** Running evaluation on test dataset *****")
+        logger.info("  Num examples = %d", len(test_examples))
         logger.info("  Batch size = %d", args.eval_batch_size)
 
         student_model.eval()
-        result = do_eval(student_model, task_name, eval_dataloader,
-                         device, output_mode, eval_labels, num_labels)
+
+        eval_start_time = time.monotonic()
+        result, y_logits = do_eval(student_model, task_name, test_dataloader,
+                                   device, output_mode, test_labels, num_labels)
+        eval_end_time = time.monotonic()
+
+        diff = timedelta(seconds=eval_end_time - eval_start_time)
+        diff_seconds = diff.total_seconds()
+        result['eval_time'] = diff_seconds
+
+        result_to_text_file(result, os.path.join(args.output_dir, "test_results.txt"))
         logger.info("***** Eval results *****")
         for key in sorted(result.keys()):
             logger.info("  %s = %s", key, str(result[key]))
+
+        y_pred = np.argmax(y_logits, axis=1)
+        print('\n\t**** Classification report ****\n')
+        print(classification_report(test_labels.numpy(), y_pred, target_names=label_list))
+
+        report = classification_report(test_labels.numpy(), y_pred, target_names=label_list, output_dict=True)
+        report['eval_time'] = diff_seconds
+        dictionary_to_json(report, os.path.join(args.output_dir, "test_results.json"))
+
     else:
+        training_start_time = time.monotonic()
+
         logger.info("***** Running training *****")
         logger.info("  Num examples = %d", len(train_examples))
+        logger.info("  Num Epochs = %d", args.num_train_epochs)
         logger.info("  Batch size = %d", args.train_batch_size)
         logger.info("  Num steps = %d", num_train_optimization_steps)
+
         if n_gpu > 1:
             student_model = torch.nn.DataParallel(student_model)
             teacher_model = torch.nn.DataParallel(teacher_model)
+
         # Prepare optimizer
         param_optimizer = list(student_model.named_parameters())
         size = 0
@@ -326,17 +378,23 @@ def main():
         logger.info('Total parameters: {}'.format(size))
         no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
         optimizer_grouped_parameters = [
-            {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
-            {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+            {'params': [p for n, p in param_optimizer
+                        if not any(nd in n for nd in no_decay)], 'weight_decay': args.weight_decay},
+            {'params': [p for n, p in param_optimizer
+                        if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
         ]
+
         schedule = 'warmup_linear'
         if not args.pred_distill:
             schedule = 'none'
-        optimizer = BertAdam(optimizer_grouped_parameters,
-                             schedule=schedule,
-                             lr=args.learning_rate,
-                             warmup=args.warmup_proportion,
-                             t_total=num_train_optimization_steps)
+
+        optimizer = BertAdam(
+            optimizer_grouped_parameters,
+            schedule=schedule,
+            lr=args.learning_rate,
+            warmup=args.warmup_proportion,
+            t_total=num_train_optimization_steps
+        )
         # Prepare loss functions
         loss_mse = MSELoss()
 
@@ -360,9 +418,12 @@ def main():
             nb_tr_examples, nb_tr_steps = 0, 0
 
             for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration", ascii=True)):
-                batch = tuple(t.to(device) for t in batch)
+                batch = {k: v.to(device) for k, v in batch.items()}
+                input_ids = batch['input_ids']
+                input_mask = batch['attention_mask']
+                segment_ids = batch['token_type_ids']
+                label_ids = batch['labels']
 
-                input_ids, input_mask, segment_ids, label_ids, seq_lengths = batch
                 if input_ids.size()[0] != args.train_batch_size:
                     continue
 
@@ -429,102 +490,76 @@ def main():
                     optimizer.zero_grad()
                     global_step += 1
 
-                if (global_step + 1) % args.eval_step == 0 or (global_step + 1) == 2 or \
-                        (global_step + 1) == num_train_optimization_steps:
-                    logger.info("***** Running evaluation *****")
-                    logger.info("  Epoch = {} iter {} step".format(epoch_, global_step))
-                    logger.info("  Num examples = %d", len(eval_examples))
-                    logger.info("  Batch size = %d", args.eval_batch_size)
+                logger.info("***** Running evaluation *****")
+                logger.info("  Epoch = {} iter {} step".format(epoch_, global_step))
+                logger.info("  Num examples = %d", len(eval_examples))
+                logger.info("  Batch size = %d", args.eval_batch_size)
 
-                    student_model.eval()
+                student_model.eval()
 
-                    loss = tr_loss / (step + 1)
-                    cls_loss = tr_cls_loss / (step + 1)
-                    att_loss = tr_att_loss / (step + 1)
-                    rep_loss = tr_rep_loss / (step + 1)
+                loss = tr_loss / nb_tr_steps
+                cls_loss = tr_cls_loss / nb_tr_steps
+                att_loss = tr_att_loss / nb_tr_steps
+                rep_loss = tr_rep_loss / nb_tr_steps
 
-                    result = {}
-                    if args.pred_distill:
-                        result = do_eval(student_model, task_name, eval_dataloader,
-                                         device, output_mode, eval_labels, num_labels)
-                    result['global_step'] = global_step
-                    result['cls_loss'] = cls_loss
-                    result['att_loss'] = att_loss
-                    result['rep_loss'] = rep_loss
-                    result['loss'] = loss
+                result = {}
+                if args.pred_distill:
+                    result, _ = do_eval(student_model, task_name, eval_dataloader,
+                                        device, output_mode, eval_labels, num_labels)
+                result['global_step'] = global_step
+                result['cls_loss'] = cls_loss
+                result['att_loss'] = att_loss
+                result['rep_loss'] = rep_loss
+                result['loss'] = loss
+                print(json.dumps(result))
 
-                    result_to_file(result, output_eval_file)
+                result_to_file(result, output_eval_file)
 
-                    if not args.pred_distill:
+                if not args.pred_distill:
+                    save_model = True
+                else:
+                    save_model = False
+
+                    if (task_name in acc_tasks or 'multiemo' in task_name) > best_dev_acc:
+                        best_dev_acc = result['acc']
                         save_model = True
-                    else:
-                        save_model = False
 
-                        if task_name in acc_tasks and result['acc'] > best_dev_acc:
-                            best_dev_acc = result['acc']
-                            save_model = True
+                    if task_name in corr_tasks and result['corr'] > best_dev_acc:
+                        best_dev_acc = result['corr']
+                        save_model = True
 
-                        if task_name in corr_tasks and result['corr'] > best_dev_acc:
-                            best_dev_acc = result['corr']
-                            save_model = True
+                    if task_name in mcc_tasks and result['mcc'] > best_dev_acc:
+                        best_dev_acc = result['mcc']
+                        save_model = True
 
-                        if task_name in mcc_tasks and result['mcc'] > best_dev_acc:
-                            best_dev_acc = result['mcc']
-                            save_model = True
+                if save_model:
+                    logger.info("***** Save model *****")
 
-                    if save_model:
-                        logger.info("***** Save model *****")
+                    model_to_save = student_model.module if hasattr(student_model, 'module') else student_model
 
-                        model_to_save = student_model.module if hasattr(student_model, 'module') else student_model
+                    model_name = WEIGHTS_NAME
+                    # if not args.pred_distill:
+                    #     model_name = "step_{}_{}".format(global_step, WEIGHTS_NAME)
+                    output_model_file = os.path.join(args.output_dir, model_name)
+                    output_config_file = os.path.join(args.output_dir, CONFIG_NAME)
 
-                        model_name = WEIGHTS_NAME
-                        # if not args.pred_distill:
-                        #     model_name = "step_{}_{}".format(global_step, WEIGHTS_NAME)
-                        output_model_file = os.path.join(args.output_dir, model_name)
-                        output_config_file = os.path.join(args.output_dir, CONFIG_NAME)
+                    torch.save(model_to_save.state_dict(), output_model_file)
+                    model_to_save.config.to_json_file(output_config_file)
+                    tokenizer.save_vocabulary(args.output_dir)
 
-                        torch.save(model_to_save.state_dict(), output_model_file)
-                        model_to_save.config.to_json_file(output_config_file)
-                        tokenizer.save_vocabulary(args.output_dir)
+                student_model.train()
 
-                        # Test mnli-mm
-                        if args.pred_distill and task_name == "mnli":
-                            task_name = "mnli-mm"
-                            processor = processors[task_name]()
-                            if not os.path.exists(args.output_dir + '-MM'):
-                                os.makedirs(args.output_dir + '-MM')
+        # Measure End Time
+        training_end_time = time.monotonic()
 
-                            eval_examples = processor.get_dev_examples(args.data_dir)
+        diff = timedelta(seconds=training_end_time - training_start_time)
+        diff_seconds = diff.total_seconds()
 
-                            eval_features = convert_examples_to_features(
-                                eval_examples, label_list, args.max_seq_length, tokenizer, output_mode)
-                            eval_data, eval_labels = get_tensor_data(output_mode, eval_features)
+        training_parameters = vars(args)
+        training_parameters['training_time'] = diff_seconds
 
-                            logger.info("***** Running mm evaluation *****")
-                            logger.info("  Num examples = %d", len(eval_examples))
-                            logger.info("  Batch size = %d", args.eval_batch_size)
-
-                            eval_sampler = SequentialSampler(eval_data)
-                            eval_dataloader = DataLoader(eval_data, sampler=eval_sampler,
-                                                         batch_size=args.eval_batch_size)
-
-                            result = do_eval(student_model, task_name, eval_dataloader,
-                                             device, output_mode, eval_labels, num_labels)
-
-                            result['global_step'] = global_step
-
-                            tmp_output_eval_file = os.path.join(args.output_dir + '-MM', "eval_results.txt")
-                            result_to_file(result, tmp_output_eval_file)
-
-                            task_name = 'mnli'
-
-                        if oncloud:
-                            logging.info(mox.file.list_directory(args.output_dir, recursive=True))
-                            logging.info(mox.file.list_directory('.', recursive=True))
-                            mox.file.copy_parallel(args.output_dir, args.data_url)
-                            mox.file.copy_parallel('.', args.data_url)
-
-                    student_model.train()
+        output_training_params_file = os.path.join(args.output_dir, "training_params.json")
+        dictionary_to_json(training_parameters, output_training_params_file)
 
 
 if __name__ == "__main__":
