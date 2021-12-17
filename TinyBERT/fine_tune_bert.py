@@ -35,7 +35,7 @@ from tqdm import tqdm, trange
 from torch.nn import CrossEntropyLoss, MSELoss
 
 from data_processing import convert_examples_to_features, \
-    compute_metrics, get_dataset_and_labels, processors, output_modes, SmartCollator
+    compute_metrics, get_dataset_and_labels, processors, output_modes, SmartCollator, MultiemoProcessor
 from transformer.modeling import TinyBertForSequenceClassification
 from transformer.tokenization import BertTokenizer
 from transformer.optimization import BertAdam
@@ -196,6 +196,7 @@ def main():
 
     # intermediate distillation default parameters
     default_params = {
+        "multiemo": {"max_seq_length": 128, "train_batch_size": 16},
         "cola": {"num_train_epochs": 3, "max_seq_length": 64},
         "mnli": {"num_train_epochs": 3, "max_seq_length": 128},
         "mrpc": {"num_train_epochs": 3, "max_seq_length": 128},
@@ -237,16 +238,29 @@ def main():
 
     if task_name in default_params:
         args.max_seq_len = default_params[task_name]["max_seq_length"]
+    elif 'multiemo' in task_name:
+        args.max_seq_length = default_params['multiemo']["max_seq_length"]
 
-    if not args.do_eval:
+    if not args.pred_distill and not args.do_eval:
         if task_name in default_params:
             args.num_train_epoch = default_params[task_name]["num_train_epochs"]
+        elif 'multiemo' in task_name:
+            args.num_train_epoch = default_params['multiemo']["num_train_epochs"]
 
-    if task_name not in processors:
+    if task_name not in processors and 'multiemo' not in task_name:
         raise ValueError("Task not found: %s" % task_name)
 
-    processor = processors[task_name]()
-    output_mode = output_modes[task_name]
+    if 'multiemo' in task_name:
+        _, lang, domain, kind = task_name.split('_')
+        processor = MultiemoProcessor(lang, domain, kind)
+    else:
+        processor = processors[task_name]()
+
+    if 'multiemo' in task_name:
+        output_mode = 'classification'
+    else:
+        output_mode = output_modes[task_name]
+
     label_list = processor.get_labels()
     num_labels = len(label_list)
 
@@ -299,22 +313,25 @@ def main():
     else:
         logger.info("***** Running training *****")
         logger.info("  Num examples = %d", len(train_examples))
+        logger.info("  Num Epochs = %d", args.num_train_epochs)
         logger.info("  Batch size = %d", args.train_batch_size)
         logger.info("  Num steps = %d", num_train_optimization_steps)
+
         if n_gpu > 1:
             model = torch.nn.DataParallel(model)
         # Prepare optimizer
         param_optimizer = list(model.named_parameters())
         size = 0
         for n, p in model.named_parameters():
-            logger.info('n: {}'.format(n))
             size += p.nelement()
 
         logger.info('Total parameters: {}'.format(size))
         no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
         optimizer_grouped_parameters = [
-            {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
-            {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+            {'params': [p for n, p in param_optimizer
+                        if not any(nd in n for nd in no_decay)], 'weight_decay': args.wegfht_decay},
+            {'params': [p for n, p in param_optimizer
+                        if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
         ]
         schedule = 'warmup_linear'
 
@@ -379,86 +396,53 @@ def main():
                     optimizer.zero_grad()
                     global_step += 1
 
-                if (global_step + 1) % args.eval_step == 0 or (global_step + 1) == 2 or \
-                        (global_step + 1) == num_train_optimization_steps:
-                    logger.info("***** Running evaluation *****")
-                    logger.info("  Epoch = {} iter {} step".format(epoch_, global_step))
-                    logger.info("  Num examples = %d", len(eval_examples))
-                    logger.info("  Batch size = %d", args.eval_batch_size)
+                logger.info("***** Running evaluation *****")
+                logger.info("  Epoch = {} iter {} step".format(epoch_, global_step))
+                logger.info("  Num examples = %d", len(eval_examples))
+                logger.info("  Batch size = %d", args.eval_batch_size)
 
-                    model.eval()
+                model.eval()
 
-                    loss = tr_loss / (step + 1)
-                    cls_loss = tr_cls_loss / (step + 1)
+                loss = tr_loss / (step + 1)
+                cls_loss = tr_cls_loss / (step + 1)
 
-                    result, _ = do_eval(model, task_name, eval_dataloader,
-                                        device, output_mode, eval_labels, num_labels)
-                    result['global_step'] = global_step
-                    result['cls_loss'] = cls_loss
-                    result['loss'] = loss
+                result, _ = do_eval(model, task_name, eval_dataloader,
+                                    device, output_mode, eval_labels, num_labels)
+                result['global_step'] = global_step
+                result['cls_loss'] = cls_loss
+                result['loss'] = loss
 
-                    result_to_file(result, output_eval_file)
+                result_to_file(result, output_eval_file)
 
-                    save_model = False
+                save_model = False
 
-                    if task_name in acc_tasks and result['acc'] > best_dev_acc:
-                        best_dev_acc = result['acc']
-                        save_model = True
+                if task_name in acc_tasks and result['acc'] > best_dev_acc:
+                    best_dev_acc = result['acc']
+                    save_model = True
 
-                    if task_name in corr_tasks and result['corr'] > best_dev_acc:
-                        best_dev_acc = result['corr']
-                        save_model = True
+                if task_name in corr_tasks and result['corr'] > best_dev_acc:
+                    best_dev_acc = result['corr']
+                    save_model = True
 
-                    if task_name in mcc_tasks and result['mcc'] > best_dev_acc:
-                        best_dev_acc = result['mcc']
-                        save_model = True
+                if task_name in mcc_tasks and result['mcc'] > best_dev_acc:
+                    best_dev_acc = result['mcc']
+                    save_model = True
 
-                    if save_model:
-                        logger.info("***** Save model *****")
+                if save_model:
+                    logger.info("***** Save model *****")
 
-                        model_to_save = model.module if hasattr(model, 'module') else model
+                    model_to_save = model.module if hasattr(model, 'module') else model
 
-                        model_name = WEIGHTS_NAME
+                    model_name = WEIGHTS_NAME
 
-                        output_model_file = os.path.join(args.output_dir, model_name)
-                        output_config_file = os.path.join(args.output_dir, CONFIG_NAME)
+                    output_model_file = os.path.join(args.output_dir, model_name)
+                    output_config_file = os.path.join(args.output_dir, CONFIG_NAME)
 
-                        torch.save(model_to_save.state_dict(), output_model_file)
-                        model_to_save.config.to_json_file(output_config_file)
-                        tokenizer.save_vocabulary(args.output_dir)
+                    torch.save(model_to_save.state_dict(), output_model_file)
+                    model_to_save.config.to_json_file(output_config_file)
+                    tokenizer.save_vocabulary(args.output_dir)
 
-                        # Test mnli-mm
-                        if task_name == "mnli":
-                            task_name = "mnli-mm"
-                            processor = processors[task_name]()
-                            if not os.path.exists(args.output_dir + '-MM'):
-                                os.makedirs(args.output_dir + '-MM')
-
-                            eval_examples = processor.get_dev_examples(args.data_dir)
-
-                            eval_features = convert_examples_to_features(
-                                eval_examples, label_list, args.max_seq_length, tokenizer, output_mode)
-                            eval_data, eval_labels = get_dataset_and_labels(output_mode, eval_features)
-
-                            logger.info("***** Running mm evaluation *****")
-                            logger.info("  Num examples = %d", len(eval_examples))
-                            logger.info("  Batch size = %d", args.eval_batch_size)
-
-                            eval_sampler = SequentialSampler(eval_data)
-                            eval_dataloader = DataLoader(eval_data, sampler=eval_sampler,
-                                                         batch_size=args.eval_batch_size)
-
-                            result, _ = do_eval(model, task_name, eval_dataloader,
-                                                device, output_mode, eval_labels, num_labels)
-
-                            result['global_step'] = global_step
-
-                            tmp_output_eval_file = os.path.join(args.output_dir + '-MM', "eval_results.txt")
-                            result_to_file(result, tmp_output_eval_file)
-
-                            task_name = 'mnli'
-
-                    model.train()
+                model.train()
 
 
 if __name__ == "__main__":

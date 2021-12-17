@@ -185,10 +185,6 @@ def main():
     parser.add_argument("--no_cuda",
                         action='store_true',
                         help="Whether not to use CUDA when available")
-    parser.add_argument('--seed',
-                        type=int,
-                        default=42,
-                        help="random seed for initialization")
     parser.add_argument('--gradient_accumulation_steps',
                         type=int,
                         default=1,
@@ -239,9 +235,6 @@ def main():
 
     logger.info("device: {} n_gpu: {}".format(device, n_gpu))
 
-    if n_gpu > 0:
-        torch.cuda.manual_seed_all(args.seed)
-
     # Prepare task settings
     if os.path.exists(args.output_dir) and os.listdir(args.output_dir):
         raise ValueError("Output directory ({}) already exists and is not empty.".format(args.output_dir))
@@ -270,7 +263,11 @@ def main():
     else:
         processor = processors[task_name]()
 
-    output_mode = output_modes[task_name]
+    if 'multiemo' in task_name:
+        output_mode = 'classification'
+    else:
+        output_mode = output_modes[task_name]
+
     label_list = processor.get_labels()
     num_labels = len(label_list)
 
@@ -372,7 +369,6 @@ def main():
         param_optimizer = list(student_model.named_parameters())
         size = 0
         for n, p in student_model.named_parameters():
-            logger.info('n: {}'.format(n))
             size += p.nelement()
 
         logger.info('Total parameters: {}'.format(size))
