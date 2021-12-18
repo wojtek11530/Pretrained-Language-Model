@@ -26,7 +26,7 @@ max_seq_length = 128
 
 task_name = 'multiemo_en_all_sentence'
 
-models = ['General_TinyBERT_4', 'General_TinyBERT_6']
+models = ['General_TinyBERT_4L_312D', 'General_TinyBERT_6L_768D']
 
 
 def main():
@@ -64,8 +64,7 @@ def main():
         logger.info(f"Fine tuning bert-base-uncased on {task_name}")
         run_process(cmd)
 
-    if not os.path.exists(os.path.join(MODEL_FOLDER, 'General_TinyBERT_4')) or \
-            not os.path.exists(os.path.join(MODEL_FOLDER, 'General_TinyBERT_6')):
+    if not all([os.path.exists(os.path.join(MODEL_FOLDER, m)) for m in models]):
         logger.info(f"Downloading General TinyBERT models")
         cmd = f'python3 download_general_tinyberts.py'
         run_process(cmd)
