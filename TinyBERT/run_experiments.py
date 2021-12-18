@@ -72,7 +72,7 @@ def main():
         logger.info("Downloading finished")
 
     for model in models:
-        student_model_name = model.split('General_')[2]
+        student_model_name = model.split('General_')[1]
         for i in range(REP_NUM):
             tmp_tinybert_output_dir = manage_output_dir(f"data/models/TMP_{student_model_name}", task_name)
             teacher_model_dir = f'data/models/bert-base-uncased/{task_name}'
