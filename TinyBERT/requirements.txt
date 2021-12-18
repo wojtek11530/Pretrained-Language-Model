@@ -5,9 +5,7 @@ boto3
 # Used for downloading models over HTTP
 requests
 
-torch>=1.0.1
+# torch>=1.0.1
 scipy>=0.14.0
 seaborn
-transformers~=4.6.1
-
 thop
