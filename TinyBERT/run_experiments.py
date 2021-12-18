@@ -26,7 +26,7 @@ max_seq_length = 128
 
 task_name = 'multiemo_en_all_sentence'
 
-models = ['TinyBERT_General_4', 'TinyBERT_General_6']
+models = ['General_TinyBERT_4', 'General_TinyBERT_6']
 
 
 def main():
@@ -67,7 +67,7 @@ def main():
     if not os.path.exists(os.path.join(MODEL_FOLDER, 'General_TinyBERT_4')) or \
             not os.path.exists(os.path.join(MODEL_FOLDER, 'General_TinyBERT_6')):
         logger.info(f"Downloading General TinyBERT models")
-        cmd = f'python3 download_model_from_hugging_face.py'
+        cmd = f'python3 download_general_tinyberts.py'
         run_process(cmd)
         logger.info("Downloading finished")
 
