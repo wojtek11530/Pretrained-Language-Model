@@ -26,6 +26,8 @@ max_seq_length = 128
 
 task_name = 'multiemo_en_all_sentence'
 
+models = ['TinyBERT_General_4L_312D', 'TinyBERT_General_6L_768D']
+
 
 def main():
     print(PROJECT_FOLDER)
@@ -62,64 +64,71 @@ def main():
         logger.info(f"Fine tuning bert-base-uncased on {task_name}")
         run_process(cmd)
 
-    for i in range(REP_NUM):
-        tmp_tinybert_output_dir = manage_output_dir("data/models/tmp_tinybert", task_name)
-        teacher_model_dir = f'data/models/bert-base-uncased/{task_name}'
-        general_tinybert_dir = f'data/models/huawei-noah/TinyBERT_General_4L_312D/{task_name}'
+    for model in models:
+        if not os.path.exists(os.path.join(DATA_FOLDER, 'models', 'huawei-noah', model)):
+            logger.info(f"Downloading {model} from hugging face repo")
+            cmd = f'python3 download_model_from_hugging_face.py --model_name huawei-noah/{model}'
+            run_process(cmd)
+            logger.info("Downloading finished")
 
-        cmd = 'python3 task_distill.py '
-        options = [
-            '--teacher_model', teacher_model_dir,
-            '--student_model', general_tinybert_dir,
-            '--data_dir', 'data/multiemo2',
-            '--task_name', task_name,
-            '--output_dir', tmp_tinybert_output_dir,
-            '--max_seq_length', str(max_seq_length),
-            '--train_batch_size', str(batch_size),
-            '--learning_rate', str(learning_rate),
-            '--num_train_epochs', str(num_train_epochs),
-            '--weight_decay', str(weight_decay),
-            '--warmup_proportion', str(warmup_steps),
-            '--do_lower_case'
-        ]
-        cmd += ' '.join(options)
-        logger.info(f"Training Temp TinyBERT model on {task_name}")
-        run_process(cmd)
+        for i in range(REP_NUM):
+            tmp_tinybert_output_dir = manage_output_dir(f"data/models/TMP_KD_{model}", task_name)
+            teacher_model_dir = f'data/models/bert-base-uncased/{task_name}'
+            general_tinybert_dir = f'data/models/huawei-noah/{model}'
 
-        tinybert_output_dir = manage_output_dir("data/models/tinybert", task_name)
-        cmd = 'python3 task_distill.py '
-        options = [
-            '--pred_distill',
-            '--teacher_model', teacher_model_dir,
-            '--student_model', tmp_tinybert_output_dir,
-            '--data_dir', 'data/multiemo2',
-            '--task_name', task_name,
-            '--output_dir', tinybert_output_dir,
-            '--max_seq_length', str(max_seq_length),
-            '--train_batch_size', str(batch_size),
-            '--learning_rate', str(learning_rate),
-            '--num_train_epochs', str(num_train_epochs),
-            '--weight_decay', str(weight_decay),
-            '--warmup_proportion', str(warmup_steps),
-            '--do_lower_case'
-        ]
-        cmd += ' '.join(options)
-        logger.info(f"Training TinyBERT model on {task_name}")
-        run_process(cmd)
+            cmd = 'python3 task_distill.py '
+            options = [
+                '--teacher_model', teacher_model_dir,
+                '--student_model', general_tinybert_dir,
+                '--data_dir', 'data/multiemo2',
+                '--task_name', task_name,
+                '--output_dir', tmp_tinybert_output_dir,
+                '--max_seq_length', str(max_seq_length),
+                '--train_batch_size', str(batch_size),
+                '--learning_rate', str(learning_rate),
+                '--num_train_epochs', str(num_train_epochs),
+                '--weight_decay', str(weight_decay),
+                '--warmup_proportion', str(warmup_steps),
+                '--do_lower_case'
+            ]
+            cmd += ' '.join(options)
+            logger.info(f"Training Temp {model} model on {task_name}")
+            run_process(cmd)
 
-        cmd = 'python3 -m test '
-        options = [
-            '--do_eval',
-            '--student_model', tinybert_output_dir,
-            '--data_dir', '../data/multiemo2',
-            '--task_name', task_name,
-            '--output_dir', tinybert_output_dir,
-            '--max_seq_length', str(max_seq_length),
-            '--do_lower_case'
-        ]
-        cmd += ' '.join(options)
-        logger.info(f"Evaluating RoSITA for {task_name}")
-        run_process(cmd)
+            tinybert_output_dir = manage_output_dir(f"data/models/KD_{model}", task_name)
+            cmd = 'python3 task_distill.py '
+            options = [
+                '--pred_distill',
+                '--teacher_model', teacher_model_dir,
+                '--student_model', tmp_tinybert_output_dir,
+                '--data_dir', 'data/multiemo2',
+                '--task_name', task_name,
+                '--output_dir', tinybert_output_dir,
+                '--max_seq_length', str(max_seq_length),
+                '--train_batch_size', str(batch_size),
+                '--learning_rate', str(learning_rate),
+                '--num_train_epochs', str(num_train_epochs),
+                '--weight_decay', str(weight_decay),
+                '--warmup_proportion', str(warmup_steps),
+                '--do_lower_case'
+            ]
+            cmd += ' '.join(options)
+            logger.info(f"Training KD_{model} model on {task_name}")
+            run_process(cmd)
+
+            cmd = 'python3 -m test '
+            options = [
+                '--do_eval',
+                '--student_model', tinybert_output_dir,
+                '--data_dir', '../data/multiemo2',
+                '--task_name', task_name,
+                '--output_dir', tinybert_output_dir,
+                '--max_seq_length', str(max_seq_length),
+                '--do_lower_case'
+            ]
+            cmd += ' '.join(options)
+            logger.info(f"Evaluating KD_{model} for {task_name}")
+            run_process(cmd)
 
     # cmd = f'python3 -m gather_results --task_name {task_name}'
     # logger.info(f"Gathering results to csv for {task_name}")

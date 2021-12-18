@@ -8,5 +8,6 @@ requests
 torch>=1.0.1
 scipy>=0.14.0
 seaborn
+transformers~=4.6.1
 
 thop

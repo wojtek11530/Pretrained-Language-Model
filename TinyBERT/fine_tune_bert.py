@@ -192,7 +192,6 @@ def main():
                         default="")
 
     args = parser.parse_args()
-    logger.info('The args: {}'.format(args))
 
     # intermediate distillation default parameters
     default_params = {
@@ -263,6 +262,8 @@ def main():
 
     label_list = processor.get_labels()
     num_labels = len(label_list)
+
+    logger.info('The args: {}'.format(args))
 
     tokenizer = BertTokenizer.from_pretrained(args.pretrained_model, do_lower_case=args.do_lower_case)
 
