@@ -207,19 +207,6 @@ def main():
 
     args = parser.parse_args()
 
-    # intermediate distillation default parameters
-    default_params = {
-        "multiemo": {"max_seq_length": 128, "train_batch_size": 16},
-        "cola": {"num_train_epochs": 50, "max_seq_length": 64},
-        "mnli": {"num_train_epochs": 5, "max_seq_length": 128},
-        "mrpc": {"num_train_epochs": 20, "max_seq_length": 128},
-        "sst-2": {"num_train_epochs": 10, "max_seq_length": 64},
-        "sts-b": {"num_train_epochs": 20, "max_seq_length": 128},
-        "qqp": {"num_train_epochs": 5, "max_seq_length": 128},
-        "qnli": {"num_train_epochs": 10, "max_seq_length": 128},
-        "rte": {"num_train_epochs": 20, "max_seq_length": 128}
-    }
-
     acc_tasks = ["mnli", "mrpc", "sst-2", "qqp", "qnli", "rte", "multiemo"]
     corr_tasks = ["sts-b"]
     mcc_tasks = ["cola"]
@@ -241,18 +228,6 @@ def main():
         os.makedirs(args.output_dir)
 
     task_name = args.task_name.lower()
-
-    if task_name in default_params:
-        args.max_seq_len = default_params[task_name]["max_seq_length"]
-    elif 'multiemo' in task_name:
-        args.max_seq_length = default_params['multiemo']["max_seq_length"]
-
-    if not args.pred_distill and not args.do_eval:
-        if task_name in default_params:
-            args.num_train_epoch = default_params[task_name]["num_train_epochs"]
-        elif 'multiemo' in task_name:
-            args.num_train_epoch = default_params['multiemo']["num_train_epochs"]
-
     if task_name not in processors and 'multiemo' not in task_name:
         raise ValueError("Task not found: %s" % task_name)
 
