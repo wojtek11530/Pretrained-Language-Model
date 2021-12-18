@@ -114,7 +114,7 @@ def main():
                 '--do_lower_case'
             ]
             cmd += ' '.join(options)
-            logger.info(f"Training {model} model on {task_name}")
+            logger.info(f"Training {student_model_name} model on {task_name}")
             run_process(cmd)
 
             cmd = 'python3 -m test '
@@ -128,7 +128,7 @@ def main():
                 '--do_lower_case'
             ]
             cmd += ' '.join(options)
-            logger.info(f"Evaluating KD_{model} for {task_name}")
+            logger.info(f"Evaluating {student_model_name} for {task_name}")
             run_process(cmd)
 
     cmd = f'python3 -m gather_results --task_name {task_name}'

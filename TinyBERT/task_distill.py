@@ -391,7 +391,7 @@ def main():
             student_model.train()
             nb_tr_examples, nb_tr_steps = 0, 0
 
-            for step, batch in enumerate(tqdm(train_dataloader, desc="Iteration", ascii=True)):
+            for step, batch in enumerate(tqdm(train_dataloader, desc=f"Epoch {epoch_+1}", ascii=True)):
                 batch = {k: v.to(device) for k, v in batch.items()}
                 input_ids = batch['input_ids']
                 input_mask = batch['attention_mask']
@@ -483,6 +483,7 @@ def main():
                 result, _ = do_eval(student_model, task_name, eval_dataloader,
                                     device, output_mode, eval_labels, num_labels)
             result['global_step'] = global_step
+            result['epoch'] = epoch_ + 1
             result['cls_loss'] = cls_loss
             result['att_loss'] = att_loss
             result['rep_loss'] = rep_loss
