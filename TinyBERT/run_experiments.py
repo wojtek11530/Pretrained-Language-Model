@@ -18,7 +18,7 @@ data_dir = os.path.join(DATA_FOLDER, 'multiemo2')
 REP_NUM = 1
 
 batch_size = 16
-num_train_epochs = 3
+num_train_epochs = 4
 learning_rate = 5e-5
 warmup_steps = 0
 weight_decay = 0.01
@@ -39,13 +39,13 @@ def main():
         run_process(cmd)
         logger.info("Downloading finished")
 
-    if not os.path.exists(os.path.join(DATA_FOLDER, 'models', 'bert-base-uncased')):
+    if not os.path.exists(os.path.join(MODEL_FOLDER, 'bert-base-uncased')):
         logger.info("Downloading bert-base-uncased model")
         cmd = 'python3 download_bert.py'
         run_process(cmd)
         logger.info("Downloading finished")
 
-    if not os.path.exists(os.path.join(DATA_FOLDER, 'models', 'bert-base-uncased', 'multiemo_en_all_sentence')):
+    if not os.path.exists(os.path.join(MODEL_FOLDER, 'bert-base-uncased', task_name)):
         cmd = 'python3 -m fine_tune_bert '
         options = [
             '--pretrained_model', 'data/models/bert-base-uncased',

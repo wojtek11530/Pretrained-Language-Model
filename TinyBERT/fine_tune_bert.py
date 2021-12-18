@@ -240,11 +240,10 @@ def main():
     elif 'multiemo' in task_name:
         args.max_seq_length = default_params['multiemo']["max_seq_length"]
 
-    if not args.pred_distill and not args.do_eval:
-        if task_name in default_params:
-            args.num_train_epoch = default_params[task_name]["num_train_epochs"]
-        elif 'multiemo' in task_name:
-            args.num_train_epoch = default_params['multiemo']["num_train_epochs"]
+    if task_name in default_params:
+        args.num_train_epoch = default_params[task_name]["num_train_epochs"]
+    elif 'multiemo' in task_name:
+        args.num_train_epoch = default_params['multiemo']["num_train_epochs"]
 
     if task_name not in processors and 'multiemo' not in task_name:
         raise ValueError("Task not found: %s" % task_name)
