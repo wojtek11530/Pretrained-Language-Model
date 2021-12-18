@@ -462,64 +462,66 @@ def main():
                     optimizer.zero_grad()
                     global_step += 1
 
-                logger.info("***** Running evaluation *****")
-                logger.info("  Epoch = {} iter {} step".format(epoch_, global_step))
-                logger.info("  Num examples = %d", len(eval_examples))
-                logger.info("  Batch size = %d", args.eval_batch_size)
+            # EPOCH ENDS
 
-                student_model.eval()
+            logger.info("***** Running evaluation *****")
+            logger.info("  Epoch = {} iter {} step".format(epoch_, global_step))
+            logger.info("  Num examples = %d", len(eval_examples))
+            logger.info("  Batch size = %d", args.eval_batch_size)
 
-                loss = tr_loss / nb_tr_steps
-                cls_loss = tr_cls_loss / nb_tr_steps
-                att_loss = tr_att_loss / nb_tr_steps
-                rep_loss = tr_rep_loss / nb_tr_steps
+            student_model.eval()
 
-                result = {}
-                if args.pred_distill:
-                    result, _ = do_eval(student_model, task_name, eval_dataloader,
-                                        device, output_mode, eval_labels, num_labels)
-                result['global_step'] = global_step
-                result['cls_loss'] = cls_loss
-                result['att_loss'] = att_loss
-                result['rep_loss'] = rep_loss
-                result['loss'] = loss
-                print(json.dumps(result))
+            loss = tr_loss / nb_tr_steps
+            cls_loss = tr_cls_loss / nb_tr_steps
+            att_loss = tr_att_loss / nb_tr_steps
+            rep_loss = tr_rep_loss / nb_tr_steps
 
-                result_to_file(result, output_eval_file)
+            result = {}
+            if args.pred_distill:
+                result, _ = do_eval(student_model, task_name, eval_dataloader,
+                                    device, output_mode, eval_labels, num_labels)
+            result['global_step'] = global_step
+            result['cls_loss'] = cls_loss
+            result['att_loss'] = att_loss
+            result['rep_loss'] = rep_loss
+            result['loss'] = loss
+            print(json.dumps(result))
 
-                if not args.pred_distill:
+            result_to_file(result, output_eval_file)
+
+            if not args.pred_distill:
+                save_model = True
+            else:
+                save_model = False
+
+                if (task_name in acc_tasks or 'multiemo' in task_name) > best_dev_acc:
+                    best_dev_acc = result['acc']
                     save_model = True
-                else:
-                    save_model = False
 
-                    if (task_name in acc_tasks or 'multiemo' in task_name) > best_dev_acc:
-                        best_dev_acc = result['acc']
-                        save_model = True
+                if task_name in corr_tasks and result['corr'] > best_dev_acc:
+                    best_dev_acc = result['corr']
+                    save_model = True
 
-                    if task_name in corr_tasks and result['corr'] > best_dev_acc:
-                        best_dev_acc = result['corr']
-                        save_model = True
+                if task_name in mcc_tasks and result['mcc'] > best_dev_acc:
+                    best_dev_acc = result['mcc']
+                    save_model = True
 
-                    if task_name in mcc_tasks and result['mcc'] > best_dev_acc:
-                        best_dev_acc = result['mcc']
-                        save_model = True
+            if save_model:
+                logger.info("***** Save model *****")
 
-                if save_model:
-                    logger.info("***** Save model *****")
+                model_to_save = student_model.module if hasattr(student_model, 'module') else student_model
 
-                    model_to_save = student_model.module if hasattr(student_model, 'module') else student_model
+                model_name = WEIGHTS_NAME
+                # if not args.pred_distill:
+                #     model_name = "step_{}_{}".format(global_step, WEIGHTS_NAME)
+                output_model_file = os.path.join(args.output_dir, model_name)
+                output_config_file = os.path.join(args.output_dir, CONFIG_NAME)
 
-                    model_name = WEIGHTS_NAME
-                    # if not args.pred_distill:
-                    #     model_name = "step_{}_{}".format(global_step, WEIGHTS_NAME)
-                    output_model_file = os.path.join(args.output_dir, model_name)
-                    output_config_file = os.path.join(args.output_dir, CONFIG_NAME)
+                torch.save(model_to_save.state_dict(), output_model_file)
+                model_to_save.config.to_json_file(output_config_file)
+                tokenizer.save_vocabulary(args.output_dir)
 
-                    torch.save(model_to_save.state_dict(), output_model_file)
-                    model_to_save.config.to_json_file(output_config_file)
-                    tokenizer.save_vocabulary(args.output_dir)
-
-                student_model.train()
+            student_model.train()
 
         # Measure End Time
         training_end_time = time.monotonic()
