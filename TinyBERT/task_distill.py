@@ -465,7 +465,7 @@ def main():
             # EPOCH ENDS
 
             logger.info("***** Running evaluation *****")
-            logger.info("  Epoch = {} iter {} step".format(epoch_, global_step))
+            logger.info("  Epoch = {} iter {} step".format(epoch_ + 1, global_step))
             logger.info("  Num examples = %d", len(eval_examples))
             logger.info("  Batch size = %d", args.eval_batch_size)
 
