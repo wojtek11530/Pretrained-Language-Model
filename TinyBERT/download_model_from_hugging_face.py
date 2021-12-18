@@ -16,5 +16,7 @@ if __name__ == '__main__':
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModel.from_pretrained(model_name)
 
-    tokenizer.save_vocabulary(os.path.join(output_path, model_name))
-    model.save_pretrained(os.path.join(output_path, model_name))
+    out_dir = os.path.join(output_path, model_name)
+    os.makedirs(out_dir, exist_ok=True)
+    tokenizer.save_vocabulary(out_dir)
+    model.save_pretrained(out_dir)
