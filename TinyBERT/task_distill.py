@@ -303,6 +303,7 @@ def main():
         logger.info("***** Running evaluation on test dataset *****")
         logger.info("  Num examples = %d", len(test_examples))
         logger.info("  Batch size = %d", args.eval_batch_size)
+        logger.info(f" Device = {device}")
 
         student_model.eval()
 

@@ -124,6 +124,7 @@ def main():
                 '--data_dir', 'data/multiemo2',
                 '--task_name', task_name,
                 '--output_dir', tinybert_output_dir,
+                '--eval_batch_size', str(batch_size),
                 '--max_seq_length', str(max_seq_length),
                 '--do_lower_case'
             ]
