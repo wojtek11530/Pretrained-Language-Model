@@ -35,7 +35,7 @@ def main():
 
             for task_subdir in task_subdirectories:
                 if task_name in task_subdir:
-                    data_dict = gather_results(subdirectory, task_name)
+                    data_dict = gather_results(task_subdir, task_name)
                     data.append(data_dict)
 
     df = pd.DataFrame(data)
