@@ -4,7 +4,6 @@ import os
 from typing import Any, Dict
 
 import pandas as pd
-from transformers import BertConfig
 
 from data_processing import MultiemoProcessor
 from transformer import TinyBertForSequenceClassification
@@ -30,7 +29,7 @@ def main():
 
     data = list()
     for subdirectory in models_subdirectories:
-        if 'bert-base-uncased' not in subdirectory and 'huawei-noah' not in subdirectory and 'TMP' not in subdirectory:
+        if 'bert-base-uncased' not in subdirectory and 'General_' not in subdirectory and 'TMP' not in subdirectory:
             task_subdirectories = get_immediate_subdirectories(subdirectory)
             task_subdirectories = sorted(task_subdirectories)
 
@@ -72,12 +71,6 @@ def gather_results(ft_model_dir: str, task_name: str) -> Dict[str, Any]:
 
     model_size = os.path.getsize(os.path.join(ft_model_dir, 'pytorch_model.bin'))
     data['model_size'] = model_size
-
-    config = BertConfig.from_pretrained(
-        ft_model_dir,
-        num_labels=num_labels,
-        finetuning_task=task_name
-    )
 
     model = TinyBertForSequenceClassification.from_pretrained(ft_model_dir, num_labels=num_labels)
 

@@ -281,9 +281,11 @@ def main():
                                  collate_fn=collator.collate_batch, pin_memory=False)
 
     if not args.do_eval:
+        logger.info(f'Loading Teacher model from {args.teacher_model}')
         teacher_model = TinyBertForSequenceClassification.from_pretrained(args.teacher_model, num_labels=num_labels)
         teacher_model.to(device)
 
+    logger.info(f'Loading Student model from {args.student_model}')
     student_model = TinyBertForSequenceClassification.from_pretrained(args.student_model, num_labels=num_labels)
     student_model.to(device)
     if args.do_eval:

@@ -26,7 +26,7 @@ max_seq_length = 128
 
 task_name = 'multiemo_en_all_sentence'
 
-models = ['TinyBERT_General_4L_312D', 'TinyBERT_General_6L_768D']
+models = ['TinyBERT_General_4', 'TinyBERT_General_6']
 
 
 def main():
@@ -64,17 +64,19 @@ def main():
         logger.info(f"Fine tuning bert-base-uncased on {task_name}")
         run_process(cmd)
 
-    for model in models:
-        if not os.path.exists(os.path.join(DATA_FOLDER, 'models', 'huawei-noah', model)):
-            logger.info(f"Downloading {model} from hugging face repo")
-            cmd = f'python3 download_model_from_hugging_face.py --model_name huawei-noah/{model}'
-            run_process(cmd)
-            logger.info("Downloading finished")
+    if not os.path.exists(os.path.join(MODEL_FOLDER, 'General_TinyBERT_4')) or \
+            not os.path.exists(os.path.join(MODEL_FOLDER, 'General_TinyBERT_6')):
+        logger.info(f"Downloading General TinyBERT models")
+        cmd = f'python3 download_model_from_hugging_face.py'
+        run_process(cmd)
+        logger.info("Downloading finished")
 
+    for model in models:
+        student_model_name = model.split('General_')[2]
         for i in range(REP_NUM):
-            tmp_tinybert_output_dir = manage_output_dir(f"data/models/TMP_KD_{model}", task_name)
+            tmp_tinybert_output_dir = manage_output_dir(f"data/models/TMP_{student_model_name}", task_name)
             teacher_model_dir = f'data/models/bert-base-uncased/{task_name}'
-            general_tinybert_dir = f'data/models/huawei-noah/{model}'
+            general_tinybert_dir = f'data/models/{model}'
 
             cmd = 'python3 task_distill.py '
             options = [
@@ -92,10 +94,10 @@ def main():
                 '--do_lower_case'
             ]
             cmd += ' '.join(options)
-            logger.info(f"Training Temp {model} model on {task_name}")
+            logger.info(f"Training temp {student_model_name} model on {task_name}")
             run_process(cmd)
 
-            tinybert_output_dir = manage_output_dir(f"data/models/KD_{model}", task_name)
+            tinybert_output_dir = manage_output_dir(f"data/models/{student_model_name}", task_name)
             cmd = 'python3 task_distill.py '
             options = [
                 '--pred_distill',
@@ -113,7 +115,7 @@ def main():
                 '--do_lower_case'
             ]
             cmd += ' '.join(options)
-            logger.info(f"Training KD_{model} model on {task_name}")
+            logger.info(f"Training {model} model on {task_name}")
             run_process(cmd)
 
             cmd = 'python3 -m test '
@@ -130,9 +132,9 @@ def main():
             logger.info(f"Evaluating KD_{model} for {task_name}")
             run_process(cmd)
 
-    # cmd = f'python3 -m gather_results --task_name {task_name}'
-    # logger.info(f"Gathering results to csv for {task_name}")
-    # run_process(cmd)
+    cmd = f'python3 -m gather_results --task_name {task_name}'
+    logger.info(f"Gathering results to csv for {task_name}")
+    run_process(cmd)
 
 
 def run_process(proc):
