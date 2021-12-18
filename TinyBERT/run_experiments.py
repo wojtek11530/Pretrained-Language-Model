@@ -117,11 +117,11 @@ def main():
             logger.info(f"Training {student_model_name} model on {task_name}")
             run_process(cmd)
 
-            cmd = 'python3 -m test '
+            cmd = 'python3 task_distill.py '
             options = [
                 '--do_eval',
                 '--student_model', tinybert_output_dir,
-                '--data_dir', '../data/multiemo2',
+                '--data_dir', 'data/multiemo2',
                 '--task_name', task_name,
                 '--output_dir', tinybert_output_dir,
                 '--max_seq_length', str(max_seq_length),
