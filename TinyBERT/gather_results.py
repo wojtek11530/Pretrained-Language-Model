@@ -10,7 +10,7 @@ from transformer import TinyBertForSequenceClassification
 
 PROJECT_FOLDER = os.path.dirname(os.path.abspath(__file__))
 DATA_FOLDER = os.path.join(PROJECT_FOLDER, 'data')
-MODELS_FOLDER = os.path.join(DATA_FOLDER, 'data', 'models')
+MODELS_FOLDER = os.path.join(DATA_FOLDER, 'models')
 
 
 def main():
