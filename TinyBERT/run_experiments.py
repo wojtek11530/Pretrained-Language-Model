@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 data_dir = os.path.join(DATA_FOLDER, 'multiemo2')
 
-REP_NUM = 5
+REP_NUM = 1
 
 batch_size = 8
 num_train_epochs = 4
@@ -26,7 +26,8 @@ max_seq_length = 256
 
 task_name = 'multiemo_en_all_text'
 
-models = ['General_TinyBERT_4L_312D', 'General_TinyBERT_6L_768D']
+models = ['General_TinyBERT_6L_768D']
+# models = ['General_TinyBERT_4L_312D', 'General_TinyBERT_6L_768D']
 
 
 def main():
