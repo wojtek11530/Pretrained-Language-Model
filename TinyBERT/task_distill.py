@@ -242,6 +242,8 @@ def main():
 
     label_list = processor.get_labels()
     num_labels = len(label_list)
+    label_map = {label: i for i, label in enumerate(label_list)}
+    labels = list(label_map.values())
 
     logger.info('The args: {}'.format(args))
 
@@ -328,9 +330,10 @@ def main():
 
         y_pred = np.argmax(y_logits, axis=1)
         print('\n\t**** Classification report ****\n')
-        print(classification_report(test_labels.numpy(), y_pred, target_names=label_list))
+        print(classification_report(test_labels.numpy(), y_pred, labels=labels, target_names=label_list))
 
-        report = classification_report(test_labels.numpy(), y_pred, target_names=label_list, output_dict=True)
+        report = classification_report(test_labels.numpy(), y_pred, labels=labels, target_names=label_list,
+                                       output_dict=True)
         report['eval_time'] = diff_seconds
         dictionary_to_json(report, os.path.join(args.output_dir, f"{result_file_name}.json"))
 
