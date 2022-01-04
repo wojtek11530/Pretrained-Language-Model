@@ -316,7 +316,12 @@ def main():
         diff_seconds = diff.total_seconds()
         result['eval_time'] = diff_seconds
 
-        result_to_text_file(result, os.path.join(args.output_dir, "test_results.txt"))
+        if task_name in args.student_model:
+            result_file_name = 'test_results'
+        else:
+            result_file_name = f'test_results_{task_name}'
+
+        result_to_text_file(result, os.path.join(args.output_dir, f"{result_file_name}.txt"))
         logger.info("***** Eval results *****")
         for key in sorted(result.keys()):
             logger.info("  %s = %s", key, str(result[key]))
@@ -327,7 +332,7 @@ def main():
 
         report = classification_report(test_labels.numpy(), y_pred, target_names=label_list, output_dict=True)
         report['eval_time'] = diff_seconds
-        dictionary_to_json(report, os.path.join(args.output_dir, "test_results.json"))
+        dictionary_to_json(report, os.path.join(args.output_dir, f"{result_file_name}.json"))
 
     else:
         training_start_time = time.monotonic()
