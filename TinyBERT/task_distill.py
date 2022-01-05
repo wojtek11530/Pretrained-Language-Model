@@ -225,7 +225,7 @@ def main():
     if not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
-    task_name = args.task_name.lower()
+    task_name = args.task_name
     if task_name not in processors and 'multiemo' not in task_name:
         raise ValueError("Task not found: %s" % task_name)
 
