@@ -17,12 +17,12 @@ data_dir = os.path.join(DATA_FOLDER, 'multiemo2')
 
 REP_NUM = 1
 
-batch_size = 8
-num_train_epochs = 4
+batch_size = 16
+num_train_epochs = 1
 learning_rate = 5e-5
 warmup_steps = 0
 weight_decay = 0.01
-max_seq_length = 256
+max_seq_length = 128
 
 models = ['General_TinyBERT_4L_312D', 'General_TinyBERT_6L_768D']
 
