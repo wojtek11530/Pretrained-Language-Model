@@ -24,7 +24,7 @@ warmup_steps = 0
 weight_decay = 0.01
 max_seq_length = 128
 
-models = ['General_TinyBERT_4L_312D', 'General_TinyBERT_6L_768D']
+models = ['General_TinyBERT_4L_312D']
 
 mode_level = 'sentence'
 domains = ['hotels', 'medicine', 'products', 'reviews']
@@ -56,21 +56,21 @@ def main():
         student_model_name = model.split('General_')[1]
         general_tinybert_dir = f'data/models/{model}'
 
-        # SINGLE DOMAIN RUNS
-        for domain in domains:
-            task_name = f'multiemo_en_{domain}_{mode_level}'
-            if not os.path.exists(os.path.join(MODEL_FOLDER, 'bert-base-uncased', task_name)):
-                fine_tune_bert_base(task_name)
-
-            for i in range(REP_NUM):
-                teacher_model_dir = f'data/models/bert-base-uncased/{task_name}'
-                tmp_tinybert_output_dir = manage_output_dir(f"data/models/TMP_{student_model_name}", task_name)
-                tinybert_output_dir = manage_output_dir(f"data/models/{student_model_name}", task_name)
-
-                task_distill_tinybert(task_name, student_model_name, teacher_model_dir, general_tinybert_dir,
-                                      tmp_tinybert_output_dir, tinybert_output_dir)
-
-                evaluate_tinybert(student_model_name, task_name, tinybert_output_dir)
+        # # SINGLE DOMAIN RUNS
+        # for domain in domains:
+        #     task_name = f'multiemo_en_{domain}_{mode_level}'
+        #     if not os.path.exists(os.path.join(MODEL_FOLDER, 'bert-base-uncased', task_name)):
+        #         fine_tune_bert_base(task_name)
+        #
+        #     for i in range(REP_NUM):
+        #         teacher_model_dir = f'data/models/bert-base-uncased/{task_name}'
+        #         tmp_tinybert_output_dir = manage_output_dir(f"data/models/TMP_{student_model_name}", task_name)
+        #         tinybert_output_dir = manage_output_dir(f"data/models/{student_model_name}", task_name)
+        #
+        #         task_distill_tinybert(task_name, student_model_name, teacher_model_dir, general_tinybert_dir,
+        #                               tmp_tinybert_output_dir, tinybert_output_dir)
+        #
+        #         evaluate_tinybert(student_model_name, task_name, tinybert_output_dir)
 
         # DOMAIN-OUT RUNS
         for domain in domains:
