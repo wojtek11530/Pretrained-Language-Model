@@ -17,16 +17,16 @@ data_dir = os.path.join(DATA_FOLDER, 'multiemo2')
 
 REP_NUM = 5
 
-batch_size = 16
+batch_size = 8
 num_train_epochs = 4
 learning_rate = 5e-5
 warmup_steps = 0
 weight_decay = 0.01
-max_seq_length = 128
+max_seq_length = 256
 
 models = ['General_TinyBERT_4L_312D', 'General_TinyBERT_6L_768D']
 
-mode_level = 'sentence'
+mode_level = 'text'
 domains = ['hotels', 'medicine', 'products', 'reviews']
 
 
@@ -56,7 +56,7 @@ def main():
         student_model_name = model.split('General_')[1]
         general_tinybert_dir = f'data/models/{model}'
 
-        # # SINGLE DOMAIN RUNS
+        # SINGLE DOMAIN RUNS
         for domain in domains:
             task_name = f'multiemo_en_{domain}_{mode_level}'
             if not os.path.exists(os.path.join(MODEL_FOLDER, 'bert-base-uncased', task_name)):
