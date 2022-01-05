@@ -27,8 +27,8 @@ max_seq_length = 128
 models = ['General_TinyBERT_4L_312D']
 
 mode_level = 'sentence'
-domains = ['hotels', 'medicine', 'products', 'reviews']
-
+# domains = ['hotels', 'medicine', 'products', 'reviews']
+domains = ['hotels']
 
 def main():
     print(PROJECT_FOLDER)
