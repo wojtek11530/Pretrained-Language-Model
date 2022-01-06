@@ -59,6 +59,9 @@ def gather_results(ft_model_dir: str, task_name: str) -> Dict[str, Any]:
     label_list = processor.get_labels()
     num_labels = len(label_list)
 
+    task_subfolder = os.path.basename(ft_model_dir)
+    model_name = os.path.basename(os.path.dirname(ft_model_dir))
+
     with open(os.path.join(ft_model_dir, 'training_params.json')) as json_file:
         training_data_dict = json.load(json_file)
 
@@ -68,6 +71,10 @@ def gather_results(ft_model_dir: str, task_name: str) -> Dict[str, Any]:
 
     data = training_data_dict.copy()  # start with keys and values of x
     data.update(test_data_dict)
+
+    with open(os.path.join(MODELS_FOLDER, 'TMP_' + model_name, task_subfolder, 'training_params.json')) as json_file:
+        tmp_model_training_data_dict = json.load(json_file)
+        data['training_time'] = data['training_time'] + tmp_model_training_data_dict['training_time']
 
     model_size = os.path.getsize(os.path.join(ft_model_dir, 'pytorch_model.bin'))
     data['model_size'] = model_size
@@ -85,9 +92,8 @@ def gather_results(ft_model_dir: str, task_name: str) -> Dict[str, Any]:
         parameters_num += p.nelement()
 
     data['parameters'] = parameters_num
-    data['name'] = os.path.basename(ft_model_dir)
-    data['model_name'] = os.path.basename(os.path.dirname(ft_model_dir))
-    print(data)
+    data['name'] = task_subfolder
+    data['model_name'] = model_name
     return data
 
 
